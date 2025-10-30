@@ -6,12 +6,12 @@ class Osdd < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-arm64-noautoupdate.tar.gz"
+      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-arm64.tar.gz"
       sha256 "__ARM64_SHA256__"
     end
 
     on_intel do
-      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-amd64-noautoupdate.tar.gz"
+      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-amd64.tar.gz"
       sha256 "__AMD64_SHA256__"
     end
   end
