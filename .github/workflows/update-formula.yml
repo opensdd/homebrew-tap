@@ -1,0 +1,192 @@
+name: Update Formula
+run-name: Update Formula ${{ github.event.inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Fetch release assets and checksums
+      id: fetch-assets
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        
+        # Validate version format
+        if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Error: Version must be in format X.Y.Z (e.g., 1.0.0)"
+          exit 1
+        fi
+        
+        # Fetch release info from GitHub API
+        echo "Fetching release info for version v${VERSION}..."
+        RELEASE_INFO=$(curl -s "https://api.github.com/repos/opensdd/osdd-cli/releases/tags/v${VERSION}")
+        
+        # Check if release exists
+        if echo "$RELEASE_INFO" | jq -e '.message == "Not Found"' > /dev/null; then
+          echo "Error: Release v${VERSION} not found"
+          exit 1
+        fi
+        
+        # Extract download URLs for binaries
+        AMD64_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name == "osdd-darwin-amd64.tar.gz") | .browser_download_url')
+        ARM64_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[] | select(.name == "osdd-darwin-arm64.tar.gz") | .browser_download_url')
+        
+        # Validate that both binaries exist
+        if [[ "$AMD64_URL" == "null" || -z "$AMD64_URL" ]]; then
+          echo "Error: AMD64 binary not found in release v${VERSION}"
+          echo "Expected asset name: osdd-darwin-amd64.tar.gz"
+          exit 1
+        fi
+        
+        if [[ "$ARM64_URL" == "null" || -z "$ARM64_URL" ]]; then
+          echo "Error: ARM64 binary not found in release v${VERSION}"
+          echo "Expected asset name: osdd-darwin-arm64.tar.gz"
+          exit 1
+        fi
+        
+        echo "Found binaries:"
+        echo "  AMD64: $AMD64_URL"
+        echo "  ARM64: $ARM64_URL"
+        
+        # Download binaries to calculate SHA256
+        echo "Downloading AMD64 binary..."
+        if ! curl -L -f -o osdd-darwin-amd64.tar.gz "$AMD64_URL"; then
+          echo "Error: Failed to download AMD64 binary"
+          exit 1
+        fi
+        
+        echo "Downloading ARM64 binary..."
+        if ! curl -L -f -o osdd-darwin-arm64.tar.gz "$ARM64_URL"; then
+          echo "Error: Failed to download ARM64 binary"
+          rm -f osdd-darwin-amd64.tar.gz
+          exit 1
+        fi
+        
+        # Verify downloads are not empty
+        if [[ ! -s osdd-darwin-amd64.tar.gz ]]; then
+          echo "Error: AMD64 binary is empty"
+          rm -f osdd-darwin-*
+          exit 1
+        fi
+        
+        if [[ ! -s osdd-darwin-arm64.tar.gz ]]; then
+          echo "Error: ARM64 binary is empty"
+          rm -f osdd-darwin-*
+          exit 1
+        fi
+        
+        # Calculate SHA256 checksums
+        echo "Calculating checksums..."
+        if command -v sha256sum &> /dev/null; then
+          AMD64_SHA256=$(sha256sum osdd-darwin-amd64.tar.gz | cut -d' ' -f1)
+          ARM64_SHA256=$(sha256sum osdd-darwin-arm64.tar.gz | cut -d' ' -f1)
+        else
+          AMD64_SHA256=$(shasum -a 256 osdd-darwin-amd64.tar.gz | cut -d' ' -f1)
+          ARM64_SHA256=$(shasum -a 256 osdd-darwin-arm64.tar.gz | cut -d' ' -f1)
+        fi
+        
+        echo "Checksums:"
+        echo "  AMD64: $AMD64_SHA256"
+        echo "  ARM64: $ARM64_SHA256"
+        
+        # Clean up downloaded files
+        rm osdd-darwin-amd64.tar.gz osdd-darwin-arm64.tar.gz
+        
+        # Set outputs
+        echo "amd64_sha256=$AMD64_SHA256" >> $GITHUB_OUTPUT
+        echo "arm64_sha256=$ARM64_SHA256" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Update formula
+      run: |
+        VERSION="${{ steps.fetch-assets.outputs.version }}"
+        AMD64_SHA256="${{ steps.fetch-assets.outputs.amd64_sha256 }}"
+        ARM64_SHA256="${{ steps.fetch-assets.outputs.arm64_sha256 }}"
+        
+        echo "Updating formula with:"
+        echo "  Version: $VERSION"
+        echo "  AMD64 SHA256: $AMD64_SHA256"
+        echo "  ARM64 SHA256: $ARM64_SHA256"
+        
+        # Backup original formula using template
+        cp _osdd.template.rb_ osdd.new.rb
+        
+        # Update the formula file
+        sed -i "s/__VERSION__/$VERSION/" osdd.new.rb
+        sed -i "s/__AMD64_SHA256__/$AMD64_SHA256/" osdd.new.rb
+        sed -i "s/__ARM64_SHA256__/$ARM64_SHA256/" osdd.new.rb
+        
+        # Verify changes were made
+        if ! grep -q "version \"$VERSION\"" osdd.new.rb; then
+          echo "Error: Failed to update version in formula"
+          cat osdd.new.rb
+          exit 1
+        fi
+        
+        if ! grep -q "$AMD64_SHA256" osdd.new.rb; then
+          echo "Error: Failed to update AMD64 SHA256 in formula"
+          cat osdd.new.rb 
+          exit 1
+        fi
+        
+        if ! grep -q "$ARM64_SHA256" osdd.new.rb; then
+          echo "Error: Failed to update ARM64 SHA256 in formula"
+          cat osdd.new.rb
+          exit 1
+        fi
+        
+        # Move updated file into place
+        mv osdd.new.rb osdd.rb
+        
+        echo "Formula updated successfully"
+        
+    - name: Commit changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Check if there are changes to commit
+        if git diff --quiet osdd.rb; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        
+        git add osdd.rb
+        
+        COMMIT_MSG_FILE=".git/COMMIT_EDITMSG_TMP"
+        printf "Update osdd formula to version %s\n\nUpdated formula with:\n  - Version: %s\n  - AMD64 SHA256: %s\n  - ARM64 SHA256: %s\n" \
+          "${{ steps.fetch-assets.outputs.version }}" \
+          "${{ steps.fetch-assets.outputs.version }}" \
+          "${{ steps.fetch-assets.outputs.amd64_sha256 }}" \
+          "${{ steps.fetch-assets.outputs.arm64_sha256 }}" > "$COMMIT_MSG_FILE"
+        
+        git commit -F "$COMMIT_MSG_FILE"
+        rm -f "$COMMIT_MSG_FILE"
+        
+        # Push changes
+        if ! git push; then
+          echo "Error: Failed to push changes"
+          exit 1
+        fi
+        
+        echo "Changes pushed successfully"
+        
