@@ -158,6 +158,7 @@ jobs:
         mv osdd.new.rb osdd.rb
         
         echo "Formula updated successfully"
+        cat osdd.rb
         
     - name: Commit changes
       run: |

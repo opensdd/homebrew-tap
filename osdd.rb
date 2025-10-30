@@ -1,0 +1,26 @@
+class Osdd < Formula
+  desc "OpenSDD CLI tool"
+  homepage "https://github.com/opensdd/osdd-cli"
+  version "__VERSION__"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-arm64-noautoupdate.tar.gz"
+      sha256 "__ARM64_SHA256__"
+    end
+
+    on_intel do
+      url "https://github.com/opensdd/osdd-cli/releases/download/v#{version}/osdd-darwin-amd64-noautoupdate.tar.gz"
+      sha256 "__AMD64_SHA256__"
+    end
+  end
+
+  def install
+    bin.install Dir["osdd-*"].first => "osdd"
+  end
+
+  test do
+    system "#{bin}/osdd", "version"
+  end
+end
